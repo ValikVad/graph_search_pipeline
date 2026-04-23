@@ -1,0 +1,233 @@
+[
+  {
+    "question": "How does the model split the vocabulary across multiple GPUs so that each device only stores and looks up a subset of token embeddings?",
+    "file": "inference/model.py",
+    "line_start": 97,
+    "line_end": 128,
+    "snippet": "    def __init__(self, vocab_size: int, dim: int):\n        super().__init__()\n        self.vocab_size = vocab_size\n        self.dim = dim\n        assert vocab_size % world_size == 0, f\"Vocabulary size must be divisible by world size (world_size={world_size})\"\n        self.part_vocab_size = (vocab_size // world_size)\n        self.vocab_start_idx = rank * self.part_vocab_size\n        self.vocab_end_idx = self.vocab_start_idx + self.part_vocab_size\n        self.weight = nn.Parameter(torch.empty(self.part_vocab_size, self.dim))\n\n    def forward(self, x: torch.Tensor) -> torch.Tensor:\n        \"\"\"\n        Forward pass for parallel embedding layer.\n\n        Args:\n            x (torch.Tensor): Input tensor containing token indices.\n\n        Returns:\n            torch.Tensor: Embedded representations.\n\n        Raises:\n            ValueError: If `world_size` is not defined.\n        \"\"\"\n        if world_size > 1:\n            mask = (x < self.vocab_start_idx) | (x >= self.vocab_end_idx)\n            x = x - self.vocab_start_idx\n            x[mask] = 0\n        y = F.embedding(x, self.weight)\n        if world_size > 1:\n            y[mask] = 0\n            dist.all_reduce(y)\n        return y"
+  },
+  {
+    "question": "How does the system decide whether to run a linear layer using full BF16 arithmetic or via FP8 quantized matrix multiplication?",
+    "file": "inference/model.py",
+    "line_start": 153,
+    "line_end": 163,
+    "snippet": "    if weight.element_size() > 1:\n        return F.linear(x, weight, bias)\n    elif gemm_impl == \"bf16\":\n        weight = weight_dequant(weight, weight.scale)\n        return F.linear(x, weight, bias)\n    else:\n        x, scale = act_quant(x, block_size, scale_fmt)\n        y = fp8_gemm(x, scale, weight, weight.scale)\n        if bias is not None:\n            y += bias\n        return y"
+  },
+  {
+    "question": "How are quantization scale tensors associated with FP8 weight tensors in the custom linear layer?",
+    "file": "inference/model.py",
+    "line_start": 179,
+    "line_end": 193,
+    "snippet": "    def __init__(self, in_features: int, out_features: int, bias: bool = False, dtype = None):\n        super().__init__()\n        self.in_features = in_features\n        self.out_features = out_features\n        self.weight = nn.Parameter(torch.empty(out_features, in_features, dtype=dtype or Linear.dtype))\n        if self.weight.element_size() == 1:\n            scale_out_features = (out_features + block_size - 1) // block_size\n            scale_in_features = (in_features + block_size - 1) // block_size\n            self.weight.scale = self.scale = nn.Parameter(torch.empty(scale_out_features, scale_in_features, dtype=torch.float32))\n        else:\n            self.register_parameter(\"scale\", None)\n        if bias:\n            self.bias = nn.Parameter(torch.empty(out_features))\n        else:\n            self.register_parameter(\"bias\", None)"
+  },
+  {
+    "question": "How does a row-parallel linear layer combine partial results produced by different GPU ranks after the matrix multiply?",
+    "file": "inference/model.py",
+    "line_start": 252,
+    "line_end": 267,
+    "snippet": "    def forward(self, x: torch.Tensor) -> torch.Tensor:\n        \"\"\"\n        Forward pass for row parallel linear layer.\n\n        Args:\n            x (torch.Tensor): Input tensor.\n\n        Returns:\n            torch.Tensor: Transformed tensor with row-parallel computation.\n        \"\"\"\n        y = linear(x, self.weight)\n        if world_size > 1:\n            dist.all_reduce(y)\n        if self.bias is not None:\n            y += self.bias\n        return y"
+  },
+  {
+    "question": "How does the model extend its positional encoding to handle sequences longer than what it was originally trained on?",
+    "file": "inference/model.py",
+    "line_start": 366,
+    "line_end": 375,
+    "snippet": "    freqs = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))\n    if seqlen > args.original_seq_len:\n        low, high = find_correction_range(beta_fast, beta_slow, dim, base, args.original_seq_len)\n        smooth = 1 - linear_ramp_factor(low, high, dim // 2)\n        freqs = freqs / factor * (1 - smooth) + freqs * smooth\n\n    t = torch.arange(seqlen)\n    freqs = torch.outer(t, freqs)\n    freqs_cis = torch.polar(torch.ones_like(freqs), freqs)\n    return freqs_cis"
+  },
+  {
+    "question": "How are rotary position embeddings applied to query and key tensors during attention computation?",
+    "file": "inference/model.py",
+    "line_start": 378,
+    "line_end": 393,
+    "snippet": "def apply_rotary_emb(x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:\n    \"\"\"\n    Applies rotary positional embeddings to the input tensor.\n\n    Args:\n        x (torch.Tensor): Input tensor with positional embeddings to be applied.\n        freqs_cis (torch.Tensor): Precomputed complex exponential values for positional embeddings.\n\n    Returns:\n        torch.Tensor: Tensor with rotary embeddings applied.\n    \"\"\"\n    dtype = x.dtype\n    x = torch.view_as_complex(x.float().view(*x.shape[:-1], -1, 2))\n    freqs_cis = freqs_cis.view(1, x.size(1), 1, x.size(-1))\n    y = torch.view_as_real(x * freqs_cis).flatten(3)\n    return y.to(dtype)"
+  },
+  {
+    "question": "When the absorbed KV-cache attention mode is used, how are the query projections reformulated to avoid materializing full key tensors?",
+    "file": "inference/model.py",
+    "line_start": 480,
+    "line_end": 497,
+    "snippet": "        else:\n            wkv_b = self.wkv_b.weight if self.wkv_b.scale is None else weight_dequant(self.wkv_b.weight, self.wkv_b.scale, block_size) \n            wkv_b = wkv_b.view(self.n_local_heads, -1, self.kv_lora_rank)\n            q_nope = torch.einsum(\"bshd,hdc->bshc\", q_nope, wkv_b[:, :self.qk_nope_head_dim])\n            self.kv_cache[:bsz, start_pos:end_pos] = self.kv_norm(kv)\n            self.pe_cache[:bsz, start_pos:end_pos] = k_pe.squeeze(2)\n            scores = (torch.einsum(\"bshc,btc->bsht\", q_nope, self.kv_cache[:bsz, :end_pos]) +\n                      torch.einsum(\"bshr,btr->bsht\", q_pe, self.pe_cache[:bsz, :end_pos])) * self.softmax_scale\n        if mask is not None:\n            scores += mask.unsqueeze(1)\n        scores = scores.softmax(dim=-1, dtype=torch.float32).type_as(x)\n        if attn_impl == \"naive\":\n            x = torch.einsum(\"bsht,bthd->bshd\", scores, self.v_cache[:bsz, :end_pos])\n        else:\n            x = torch.einsum(\"bsht,btc->bshc\", scores, self.kv_cache[:bsz, :end_pos])\n            x = torch.einsum(\"bshc,hdc->bshd\", x, wkv_b[:, -self.v_head_dim:])\n        x = self.wo(x.flatten(2))\n        return x"
+  },
+  {
+    "question": "What two different KV-cache storage strategies does the attention layer support, and what tensors does each one allocate?",
+    "file": "inference/model.py",
+    "line_start": 439,
+    "line_end": 444,
+    "snippet": "        if attn_impl == \"naive\":\n            self.register_buffer(\"k_cache\", torch.zeros(args.max_batch_size, args.max_seq_len, self.n_local_heads, self.qk_head_dim), persistent=False)\n            self.register_buffer(\"v_cache\", torch.zeros(args.max_batch_size, args.max_seq_len, self.n_local_heads, self.v_head_dim), persistent=False)\n        else:\n            self.register_buffer(\"kv_cache\", torch.zeros(args.max_batch_size, args.max_seq_len, self.kv_lora_rank), persistent=False)\n            self.register_buffer(\"pe_cache\", torch.zeros(args.max_batch_size, args.max_seq_len, self.qk_rope_head_dim), persistent=False)"
+  },
+  {
+    "question": "How does the attention softmax scale get adjusted when the model is serving sequences longer than its training context length?",
+    "file": "inference/model.py",
+    "line_start": 434,
+    "line_end": 437,
+    "snippet": "        self.softmax_scale = self.qk_head_dim ** -0.5\n        if args.max_seq_len > args.original_seq_len:\n            mscale = 0.1 * args.mscale * math.log(args.rope_factor) + 1.0\n            self.softmax_scale = self.softmax_scale * mscale * mscale"
+  },
+  {
+    "question": "How does the feed-forward network use a gating mechanism to combine two parallel projections into a single output?",
+    "file": "inference/model.py",
+    "line_start": 522,
+    "line_end": 532,
+    "snippet": "    def forward(self, x: torch.Tensor) -> torch.Tensor:\n        \"\"\"\n        Forward pass for the MLP layer.\n\n        Args:\n            x (torch.Tensor): Input tensor.\n\n        Returns:\n            torch.Tensor: Output tensor after MLP computation.\n        \"\"\"\n        return self.w2(F.silu(self.w1(x)) * self.w3(x))"
+  },
+  {
+    "question": "How does the MoE router select which experts to activate when the experts are organized into groups, and how does it handle the group-level scoring when a bias term is present?",
+    "file": "inference/model.py",
+    "line_start": 576,
+    "line_end": 598,
+    "snippet": "        scores = linear(x, self.weight)\n        if self.score_func == \"softmax\":\n            scores = scores.softmax(dim=-1, dtype=torch.float32)\n        else:\n            scores = scores.sigmoid()\n        original_scores = scores\n        if self.bias is not None:\n            scores = scores + self.bias\n        if self.n_groups > 1:\n            scores = scores.view(x.size(0), self.n_groups, -1)\n            if self.bias is None:\n                group_scores = scores.amax(dim=-1)\n            else:\n                group_scores = scores.topk(2, dim=-1)[0].sum(dim=-1)\n            indices = group_scores.topk(self.topk_groups, dim=-1)[1]\n            mask = scores.new_ones(x.size(0), self.n_groups, dtype=bool).scatter_(1, indices, False)\n            scores = scores.masked_fill_(mask.unsqueeze(-1), float(\"-inf\")).flatten(1)\n        indices = torch.topk(scores, self.topk, dim=-1)[1]\n        weights = original_scores.gather(1, indices)\n        if self.score_func == \"sigmoid\":\n            weights /= weights.sum(dim=-1, keepdim=True)\n        weights *= self.route_scale\n        return weights.type_as(x), indices"
+  },
+  {
+    "question": "How does the gate determine whether to include a trainable bias correction term for routing, and when is that bias present?",
+    "file": "inference/model.py",
+    "line_start": 556,
+    "line_end": 564,
+    "snippet": "        super().__init__()\n        self.dim = args.dim\n        self.topk = args.n_activated_experts\n        self.n_groups = args.n_expert_groups\n        self.topk_groups = args.n_limited_groups\n        self.score_func = args.score_func\n        self.route_scale = args.route_scale\n        self.weight = nn.Parameter(torch.empty(args.n_routed_experts, args.dim))\n        self.bias = nn.Parameter(torch.empty(args.n_routed_experts, dtype=torch.float32)) if self.dim == 7168 else None"
+  },
+  {
+    "question": "In the MoE forward pass, how does each rank avoid redundant computation by only running the experts it owns?",
+    "file": "inference/model.py",
+    "line_start": 679,
+    "line_end": 693,
+    "snippet": "        shape = x.size()\n        x = x.view(-1, self.dim)\n        weights, indices = self.gate(x)\n        y = torch.zeros_like(x)\n        counts = torch.bincount(indices.flatten(), minlength=self.n_routed_experts).tolist()\n        for i in range(self.experts_start_idx, self.experts_end_idx):\n            if counts[i] == 0:\n                continue\n            expert = self.experts[i]\n            idx, top = torch.where(indices == i)\n            y[idx] += expert(x[idx]) * weights[idx, top, None]\n        z = self.shared_experts(x)\n        if world_size > 1:\n            dist.all_reduce(y)\n        return (y + z).view(shape)"
+  },
+  {
+    "question": "How does each transformer block decide whether its feed-forward sub-layer should be a dense MLP or a Mixture-of-Experts layer?",
+    "file": "inference/model.py",
+    "line_start": 706,
+    "line_end": 718,
+    "snippet": "    def __init__(self, layer_id: int, args: ModelArgs):\n        \"\"\"\n        Initializes the Transformer block.\n\n        Args:\n            layer_id (int): Layer index in the transformer.\n            args (ModelArgs): Model arguments containing block parameters.\n        \"\"\"\n        super().__init__()\n        self.attn = MLA(args)\n        self.ffn = MLP(args.dim, args.inter_dim) if layer_id < args.n_dense_layers else MoE(args)\n        self.attn_norm = RMSNorm(args.dim)\n        self.ffn_norm = RMSNorm(args.dim)"
+  },
+  {
+    "question": "How does the transformer apply residual connections and layer normalization around the attention and feed-forward sub-layers?",
+    "file": "inference/model.py",
+    "line_start": 720,
+    "line_end": 735,
+    "snippet": "    def forward(self, x: torch.Tensor, start_pos: int, freqs_cis: torch.Tensor, mask: Optional[torch.Tensor]) -> torch.Tensor:\n        \"\"\"\n        Forward pass for the Transformer block.\n\n        Args:\n            x (torch.Tensor): Input tensor.\n            start_pos (int): Starting position in the sequence.\n            freqs_cis (torch.Tensor): Precomputed complex exponential values for rotary embeddings.\n            mask (Optional[torch.Tensor]): Mask tensor to exclude certain positions from attention.\n\n        Returns:\n            torch.Tensor: Output tensor after block computation.\n        \"\"\"\n        x = x + self.attn(self.attn_norm(x), start_pos, freqs_cis, mask)\n        x = x + self.ffn(self.ffn_norm(x))\n        return x"
+  },
+  {
+    "question": "How does the top-level transformer model set per-layer data types and initialize global rank/world-size state from the distributed environment?",
+    "file": "inference/model.py",
+    "line_start": 757,
+    "line_end": 770,
+    "snippet": "        global world_size, rank\n        world_size = dist.get_world_size() if dist.is_initialized() else 1\n        rank = dist.get_rank() if dist.is_initialized() else 0\n        Linear.dtype = torch.float8_e4m3fn if args.dtype == \"fp8\" else torch.bfloat16\n        Linear.scale_fmt = args.scale_fmt\n        super().__init__()\n        self.max_seq_len = args.max_seq_len\n        self.embed = ParallelEmbedding(args.vocab_size, args.dim)\n        self.layers = torch.nn.ModuleList()\n        for layer_id in range(args.n_layers):\n            self.layers.append(Block(layer_id, args))\n        self.norm = RMSNorm(args.dim)\n        self.head = ColumnParallelLinear(args.dim, args.vocab_size, dtype=torch.get_default_dtype())"
+  },
+  {
+    "question": "How does the transformer's forward pass build the causal attention mask and assemble final logits across all tensor-parallel ranks?",
+    "file": "inference/model.py",
+    "line_start": 783,
+    "line_end": 798,
+    "snippet": "        seqlen = tokens.size(1)\n        h = self.embed(tokens)\n        freqs_cis = self.freqs_cis[start_pos:start_pos+seqlen]\n        mask = None\n        if seqlen > 1:\n            mask = torch.full((seqlen, seqlen), float(\"-inf\"), device=tokens.device).triu_(1)\n        for layer in self.layers:\n            h = layer(h, start_pos, freqs_cis, mask)\n        h = self.norm(h)[:, -1]\n        logits = self.head(h)\n        if world_size > 1:\n            all_logits = [torch.empty_like(logits) for _ in range(world_size)]\n            dist.all_gather(all_logits, logits)\n            logits = torch.cat(all_logits, dim=-1)\n        return logits"
+  },
+  {
+    "question": "How does the token sampling routine implement temperature-scaled sampling without explicitly computing a categorical distribution?",
+    "file": "inference/generate.py",
+    "line_start": 14,
+    "line_end": 27,
+    "snippet": "def sample(logits, temperature: float = 1.0):\n    \"\"\"\n    Samples a token from the logits using temperature scaling.\n\n    Args:\n        logits (torch.Tensor): The logits tensor for token predictions.\n        temperature (float, optional): Temperature for scaling logits. Defaults to 1.0.\n\n    Returns:\n        torch.Tensor: The sampled token.\n    \"\"\"\n    logits = logits / max(temperature, 1e-5)\n    probs = torch.softmax(logits, dim=-1)\n    return probs.div_(torch.empty_like(probs).exponential_(1)).argmax(dim=-1)"
+  },
+  {
+    "question": "How does the generation loop handle batched sequences with different prompt lengths, and how does it know when the entire batch has finished?",
+    "file": "inference/generate.py",
+    "line_start": 51,
+    "line_end": 78,
+    "snippet": "    prompt_lens = [len(t) for t in prompt_tokens]\n    assert max(prompt_lens) <= model.max_seq_len, f\"Prompt length exceeds model maximum sequence length (max_seq_len={model.max_seq_len})\"\n    total_len = min(model.max_seq_len, max_new_tokens + max(prompt_lens))\n    tokens = torch.full((len(prompt_tokens), total_len), -1, dtype=torch.long, device=\"cuda\")\n    for i, t in enumerate(prompt_tokens):\n        tokens[i, :len(t)] = torch.tensor(t, dtype=torch.long, device=\"cuda\")\n    prev_pos = 0\n    finished = torch.tensor([False] * len(prompt_tokens), device=\"cuda\")\n    prompt_mask = tokens != -1\n    for cur_pos in range(min(prompt_lens), total_len):\n        logits = model.forward(tokens[:, prev_pos:cur_pos], prev_pos)\n        if temperature > 0:\n            next_token = sample(logits, temperature)\n        else:\n            next_token = logits.argmax(dim=-1)\n        next_token = torch.where(prompt_mask[:, cur_pos], tokens[:, cur_pos], next_token)\n        tokens[:, cur_pos] = next_token\n        finished |= torch.logical_and(~prompt_mask[:, cur_pos], next_token == eos_id)\n        prev_pos = cur_pos\n        if finished.all():\n            break\n    completion_tokens = []\n    for i, toks in enumerate(tokens.tolist()):\n        toks = toks[prompt_lens[i]:prompt_lens[i]+max_new_tokens]\n        if eos_id in toks:\n            toks = toks[:toks.index(eos_id)]\n        completion_tokens.append(toks)\n    return completion_tokens"
+  },
+  {
+    "question": "How does the distributed interactive generation mode ensure all ranks receive the same user prompt text?",
+    "file": "inference/generate.py",
+    "line_start": 121,
+    "line_end": 144,
+    "snippet": "    if interactive:\n        messages = []\n        while True:\n            if world_size == 1:\n                prompt = input(\">>> \")\n            elif rank == 0:\n                prompt = input(\">>> \")\n                objects = [prompt]\n                dist.broadcast_object_list(objects, 0)\n            else:\n                objects = [None]\n                dist.broadcast_object_list(objects, 0)\n                prompt = objects[0]\n            if prompt == \"/exit\":\n                break\n            elif prompt == \"/clear\":\n                messages.clear()\n                continue\n            messages.append({\"role\": \"user\", \"content\": prompt})\n            prompt_tokens = tokenizer.apply_chat_template(messages, add_generation_prompt=True)\n            completion_tokens = generate(model, [prompt_tokens], max_new_tokens, tokenizer.eos_token_id, temperature)\n            completion = tokenizer.decode(completion_tokens[0], skip_special_tokens=True)\n            print(completion)\n            messages.append({\"role\": \"assistant\", \"content\": completion})"
+  },
+  {
+    "question": "How does the inference startup sequence warm up the model before loading the real weights?",
+    "file": "inference/generate.py",
+    "line_start": 112,
+    "line_end": 119,
+    "snippet": "    with open(config) as f:\n        args = ModelArgs(**json.load(f))\n    print(args)\n    with torch.device(\"cuda\"):\n        model = Transformer(args)\n    tokenizer = AutoTokenizer.from_pretrained(ckpt_path)\n    tokenizer.decode(generate(model, [tokenizer.encode(\"DeepSeek\")], 2, -1, 1.)[0])\n    load_model(model, os.path.join(ckpt_path, f\"model{rank}-mp{world_size}.safetensors\"))"
+  },
+  {
+    "question": "How does the main entry point suppress output from non-primary ranks in a multi-GPU run?",
+    "file": "inference/generate.py",
+    "line_start": 100,
+    "line_end": 108,
+    "snippet": "    world_size = int(os.getenv(\"WORLD_SIZE\", \"1\"))\n    rank = int(os.getenv(\"RANK\", \"0\"))\n    local_rank = int(os.getenv(\"LOCAL_RANK\", \"0\"))\n    if world_size > 1:\n        dist.init_process_group(\"nccl\")\n    global print\n    if rank != 0:\n        print = lambda *_, **__: None\n    torch.cuda.set_device(local_rank)"
+  },
+  {
+    "question": "How does the block-wise FP8 quantization kernel compute and store a per-block scale factor for each activation block?",
+    "file": "inference/kernel.py",
+    "line_start": 9,
+    "line_end": 35,
+    "snippet": "@triton.jit\ndef act_quant_kernel(x_ptr, y_ptr, s_ptr, BLOCK_SIZE: tl.constexpr, scale_fmt: tl.constexpr):\n    \"\"\"\n    Quantizes the input tensor `x_ptr` and stores the result in `y_ptr` and the scaling factor in `s_ptr`.\n\n    Args:\n        x_ptr (triton.Pointer): Pointer to the input tensor.\n        y_ptr (triton.Pointer): Pointer to the output tensor where quantized values will be stored.\n        s_ptr (triton.Pointer): Pointer to the output tensor where scaling factors will be stored.\n        BLOCK_SIZE (tl.constexpr): The size of the block to be processed by each program instance.\n\n    Returns:\n        None\n    \"\"\"\n    pid = tl.program_id(axis=0)\n    offs = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)\n    x = tl.load(x_ptr + offs).to(tl.float32)\n    amax = tl.max(tl.abs(x)) # reduction\n    amax = tl.maximum(amax, 1e-4) # clamp to 1e-4\n    s = amax / 448.\n    if scale_fmt == \"ue8m0\":\n        exp = tl.math.ceil(tl.math.log2(s))\n        s = tl.math.exp2(exp)\n    y = x / s\n    y = y.to(y_ptr.dtype.element_ty)\n    tl.store(y_ptr + offs, y)\n    tl.store(s_ptr + pid, s)"
+  },
+  {
+    "question": "How does the Triton kernel reconstruct full-precision weights from their block-quantized FP8 representation?",
+    "file": "inference/kernel.py",
+    "line_start": 60,
+    "line_end": 86,
+    "snippet": "@triton.jit\ndef weight_dequant_kernel(x_ptr, s_ptr, y_ptr, M, N, BLOCK_SIZE: tl.constexpr):\n    \"\"\"\n    Dequantizes weights using the provided scaling factors and stores the result.\n\n    Args:\n        x_ptr (tl.pointer): Pointer to the quantized weights.\n        s_ptr (tl.pointer): Pointer to the scaling factors.\n        y_ptr (tl.pointer): Pointer to the output buffer for dequantized weights.\n        M (int): Number of rows in the weight matrix.\n        N (int): Number of columns in the weight matrix.\n        BLOCK_SIZE (tl.constexpr): Size of the block for tiling.\n\n    Returns:\n        None\n    \"\"\"\n    pid_m = tl.program_id(axis=0)\n    pid_n = tl.program_id(axis=1)\n    n = tl.cdiv(N, BLOCK_SIZE)\n    offs_m = pid_m * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)\n    offs_n = pid_n * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)\n    offs = offs_m[:, None] * N + offs_n[None, :]\n    mask = (offs_m[:, None] < M) & (offs_n[None, :] < N)\n    x = tl.load(x_ptr + offs, mask=mask).to(tl.float32)\n    s = tl.load(s_ptr + pid_m * n + pid_n)\n    y = x * s\n    tl.store(y_ptr + offs, y, mask=mask)"
+  },
+  {
+    "question": "How does the FP8 matrix multiplication kernel accumulate results for each output tile while incorporating per-block scale factors for both input matrices?",
+    "file": "inference/kernel.py",
+    "line_start": 118,
+    "line_end": 172,
+    "snippet": "@triton.autotune(configs=fp8_gemm_configs, key=['N', 'K'])\n@triton.jit\ndef fp8_gemm_kernel(a_ptr, b_ptr, c_ptr,\n                    a_s_ptr, b_s_ptr,\n                    M, N: tl.constexpr, K: tl.constexpr,\n                    BLOCK_SIZE_M: tl.constexpr,\n                    BLOCK_SIZE_N: tl.constexpr,\n                    BLOCK_SIZE_K: tl.constexpr):\n    \"\"\"\n    Performs a matrix multiplication operation on FP8 matrices with scaling factors.\n\n    Args:\n        a_ptr (tl.tensor): Pointer to the first input matrix A.\n        b_ptr (tl.tensor): Pointer to the second input matrix B.\n        c_ptr (tl.tensor): Pointer to the output matrix C.\n        a_s_ptr (tl.tensor): Pointer to the scaling factors for matrix A.\n        b_s_ptr (tl.tensor): Pointer to the scaling factors for matrix B.\n        M (int): Number of rows in matrix A and C.\n        N (tl.constexpr): Number of columns in matrix B and C.\n        K (tl.constexpr): Number of columns in matrix A and rows in matrix B.\n        BLOCK_SIZE_M (tl.constexpr): Block size for the M dimension.\n        BLOCK_SIZE_N (tl.constexpr): Block size for the N dimension.\n        BLOCK_SIZE_K (tl.constexpr): Block size for the K dimension.\n\n    Returns:\n        None\n    \"\"\"\n    pid_m = tl.program_id(axis=0)\n    pid_n = tl.program_id(axis=1)\n    k = tl.cdiv(K, BLOCK_SIZE_K)\n    offs_m = (pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)) % M\n    offs_n = (pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)) % N\n    offs_k = tl.arange(0, BLOCK_SIZE_K)\n    a_ptrs = a_ptr + offs_m[:, None] * K + offs_k[None, :]\n    b_ptrs = b_ptr + offs_n[None, :] * K + offs_k[:, None]\n    a_s_ptrs = a_s_ptr + offs_m * k\n    b_s_ptrs = b_s_ptr + (offs_n // BLOCK_SIZE_K) * k\n\n    accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)\n    for i in range(k):\n        a = tl.load(a_ptrs, mask=offs_k[None, :] < K - i * BLOCK_SIZE_K, other=0.0)\n        b = tl.load(b_ptrs, mask=offs_k[:, None] < K - i * BLOCK_SIZE_K, other=0.0)\n        a_s = tl.load(a_s_ptrs)\n        b_s = tl.load(b_s_ptrs)\n        accumulator += tl.dot(a, b) * a_s[:, None] * b_s[None, :]\n        a_ptrs += BLOCK_SIZE_K\n        b_ptrs += BLOCK_SIZE_K\n        a_s_ptrs += 1\n        b_s_ptrs += 1\n    c = accumulator.to(c_ptr.dtype.element_ty)\n    offs_m = pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)\n    offs_n = pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)\n    c_ptrs = c_ptr + offs_m[:, None] * N + offs_n[None, :]\n    mask = (offs_m[:, None] < M) & (offs_n[None, :] < N)\n    tl.store(c_ptrs, c, mask=mask)"
+  },
+  {
+    "question": "How are the Triton kernel tile sizes for the FP8 matrix multiplication chosen at runtime?",
+    "file": "inference/kernel.py",
+    "line_start": 113,
+    "line_end": 116,
+    "snippet": "fp8_gemm_configs = [\n    Config({'BLOCK_SIZE_M': block_m, 'BLOCK_SIZE_N': block_n, 'BLOCK_SIZE_K': 128}, num_stages=num_stages, num_warps=8)\n    for block_m in [16, 32, 64] for block_n in [32, 64, 128] for num_stages in [3, 4, 5, 6]\n]"
+  },
+  {
+    "question": "How does the checkpoint conversion script shard expert weights across model-parallel ranks while treating non-expert tensors differently?",
+    "file": "inference/convert.py",
+    "line_start": 66,
+    "line_end": 76,
+    "snippet": "                for i in range(mp):\n                    new_param = param\n                    if \"experts\" in name and \"shared_experts\" not in name:\n                        idx = int(name.split(\".\")[-3])\n                        if idx < i * n_local_experts or idx >= (i + 1) * n_local_experts:\n                            continue\n                    elif dim is not None:\n                        assert param.size(dim) % mp == 0, f\"Dimension {dim} must be divisible by {mp}\"\n                        shard_size = param.size(dim) // mp\n                        new_param = param.narrow(dim, i * shard_size, shard_size).contiguous()\n                    state_dicts[i][name] = new_param"
+  },
+  {
+    "question": "How does the weight name mapping table translate Hugging Face checkpoint parameter names into the internal model parameter names?",
+    "file": "inference/convert.py",
+    "line_start": 11,
+    "line_end": 30,
+    "snippet": "mapping = {\n    \"embed_tokens\": (\"embed\", 0),\n    \"input_layernorm\": (\"attn_norm\", None),\n    \"post_attention_layernorm\": (\"ffn_norm\", None),\n    \"q_proj\": (\"wq\", 0),\n    \"q_a_proj\": (\"wq_a\", None),\n    \"q_a_layernorm\": (\"q_norm\", None),\n    \"q_b_proj\": (\"wq_b\", 0),\n    \"kv_a_proj_with_mqa\": (\"wkv_a\", None),\n    \"kv_a_layernorm\": (\"kv_norm\", None),\n    \"kv_b_proj\": (\"wkv_b\", 0),\n    \"o_proj\": (\"wo\", 1),\n    \"gate\": (\"gate\", None),\n    \"gate_proj\": (\"w1\", 0),\n    \"down_proj\": (\"w2\", 1),\n    \"up_proj\": (\"w3\", 0),\n    \"norm\": (\"norm\", None),\n    \"lm_head\": (\"head\", 0),\n    \"scale\": (\"scale\", None),\n}"
+  },
+  {
+    "question": "How does the FP8-to-BF16 conversion script identify which tensors need dequantization and locate their corresponding inverse-scale tensors, which may live in a different safetensors shard?",
+    "file": "inference/fp8_cast_bf16.py",
+    "line_start": 65,
+    "line_end": 94,
+    "snippet": "    for safetensor_file in tqdm(safetensor_files):\n        file_name = os.path.basename(safetensor_file)\n        current_state_dict = load_file(safetensor_file, device=\"cuda\")\n        loaded_files[file_name] = current_state_dict\n        \n        new_state_dict = {}\n        for weight_name, weight in current_state_dict.items():\n            if weight_name.endswith(\"_scale_inv\"):\n                continue\n            elif weight.element_size() == 1:  # FP8 weight\n                scale_inv_name = f\"{weight_name}_scale_inv\"\n                try:\n                    # Get scale_inv from the correct file\n                    scale_inv = get_tensor(scale_inv_name)\n                    fp8_weight_names.append(weight_name)\n                    new_state_dict[weight_name] = weight_dequant(weight, scale_inv)\n                except KeyError:\n                    print(f\"Warning: Missing scale_inv tensor for {weight_name}, skipping conversion\")\n                    new_state_dict[weight_name] = weight\n            else:\n                new_state_dict[weight_name] = weight\n                \n        new_safetensor_file = os.path.join(bf16_path, file_name)\n        save_file(new_state_dict, new_safetensor_file)\n        \n        # Memory management: keep only the 2 most recently used files\n        if len(loaded_files) > 2:\n            oldest_file = next(iter(loaded_files))\n            del loaded_files[oldest_file]\n            torch.cuda.empty_cache()"
+  },
+  {
+    "question": "How does the FP8-to-BF16 conversion script update the model index file so that references to inverse-scale tensors are removed from the weight map?",
+    "file": "inference/fp8_cast_bf16.py",
+    "line_start": 97,
+    "line_end": 103,
+    "snippet": "    # Update model index\n    new_model_index_file = os.path.join(bf16_path, \"model.safetensors.index.json\")\n    for weight_name in fp8_weight_names:\n        scale_inv_name = f\"{weight_name}_scale_inv\"\n        if scale_inv_name in weight_map:\n            weight_map.pop(scale_inv_name)\n    with open(new_model_index_file, \"w\") as f:\n        json.dump({\"metadata\": {}, \"weight_map\": weight_map}, f, indent=2)"
+  },
+  {
+    "question": "What are all the hyperparameters that distinguish the full 671B production model configuration from smaller model variants?",
+    "file": "inference/configs/config_671B.json",
+    "line_start": 1,
+    "line_end": 22,
+    "snippet": "{\n    \"vocab_size\": 129280,\n    \"dim\": 7168,\n    \"inter_dim\": 18432,\n    \"moe_inter_dim\": 2048,\n    \"n_layers\": 61,\n    \"n_dense_layers\": 3,\n    \"n_heads\": 128,\n    \"n_routed_experts\": 256,\n    \"n_shared_experts\": 1,\n    \"n_activated_experts\": 8,\n    \"n_expert_groups\": 8,\n    \"n_limited_groups\": 4,\n    \"route_scale\": 2.5,\n    \"score_func\": \"sigmoid\",\n    \"q_lora_rank\": 1536,\n    \"kv_lora_rank\": 512,\n    \"qk_nope_head_dim\": 128,\n    \"qk_rope_head_dim\": 64,\n    \"v_head_dim\": 128,\n    \"dtype\": \"fp8\"\n}"
+  },
+  {
+    "question": "How does the v3.1 model configuration differ from the standard 671B configuration in terms of how quantization scales are represented?",
+    "file": "inference/configs/config_v3.1.json",
+    "line_start": 1,
+    "line_end": 23,
+    "snippet": "{\n    \"vocab_size\": 129280,\n    \"dim\": 7168,\n    \"inter_dim\": 18432,\n    \"moe_inter_dim\": 2048,\n    \"n_layers\": 61,\n    \"n_dense_layers\": 3,\n    \"n_heads\": 128,\n    \"n_routed_experts\": 256,\n    \"n_shared_experts\": 1,\n    \"n_activated_experts\": 8,\n    \"n_expert_groups\": 8,\n    \"n_limited_groups\": 4,\n    \"route_scale\": 2.5,\n    \"score_func\": \"sigmoid\",\n    \"q_lora_rank\": 1536,\n    \"kv_lora_rank\": 512,\n    \"qk_nope_head_dim\": 128,\n    \"qk_rope_head_dim\": 64,\n    \"v_head_dim\": 128,\n    \"dtype\": \"fp8\",\n    \"scale_fmt\": \"ue8m0\"\n}"
+  },
+  {
+    "question": "How does the MLA layer construct queries from the input when a low-rank LoRA decomposition is configured for the query projection?",
+    "file": "inference/model.py",
+    "line_start": 461,
+    "line_end": 470,
+    "snippet": "        bsz, seqlen, _ = x.size()\n        end_pos = start_pos + seqlen\n        if self.q_lora_rank == 0:\n            q = self.wq(x)\n        else:\n            q = self.wq_b(self.q_norm(self.wq_a(x)))\n        q = q.view(bsz, seqlen, self.n_local_heads, self.qk_head_dim)\n        q_nope, q_pe = torch.split(q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)\n        q_pe = apply_rotary_emb(q_pe, freqs_cis)\n        kv = self.wkv_a(x)"
+  }
+]

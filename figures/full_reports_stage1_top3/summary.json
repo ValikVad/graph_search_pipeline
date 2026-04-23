@@ -1,0 +1,122 @@
+{
+  "overall": {
+    "n": 535,
+    "stage1_found": 328,
+    "stage3_no_ast_found": 393,
+    "stage3_found": 404
+  },
+  "by_repo_split": {
+    "browser-use_browser-use:easy": {
+      "n": 30,
+      "n_snippets": 3023,
+      "stage1_found": 21,
+      "stage3_no_ast_found": 27,
+      "stage3_found": 28
+    },
+    "browser-use_browser-use:hard": {
+      "n": 36,
+      "n_snippets": 3023,
+      "stage1_found": 16,
+      "stage3_no_ast_found": 23,
+      "stage3_found": 24
+    },
+    "docling-project_docling:easy": {
+      "n": 33,
+      "n_snippets": 1667,
+      "stage1_found": 24,
+      "stage3_no_ast_found": 30,
+      "stage3_found": 32
+    },
+    "docling-project_docling:hard": {
+      "n": 32,
+      "n_snippets": 1667,
+      "stage1_found": 14,
+      "stage3_no_ast_found": 19,
+      "stage3_found": 19
+    },
+    "infiniflow_ragflow:easy": {
+      "n": 34,
+      "n_snippets": 9119,
+      "stage1_found": 20,
+      "stage3_no_ast_found": 24,
+      "stage3_found": 25
+    },
+    "infiniflow_ragflow:hard": {
+      "n": 30,
+      "n_snippets": 9119,
+      "stage1_found": 12,
+      "stage3_no_ast_found": 14,
+      "stage3_found": 16
+    },
+    "karpathy_nanochat:easy": {
+      "n": 33,
+      "n_snippets": 313,
+      "stage1_found": 23,
+      "stage3_no_ast_found": 29,
+      "stage3_found": 29
+    },
+    "karpathy_nanochat:hard": {
+      "n": 34,
+      "n_snippets": 313,
+      "stage1_found": 21,
+      "stage3_no_ast_found": 22,
+      "stage3_found": 22
+    },
+    "microsoft_autogen:easy": {
+      "n": 33,
+      "n_snippets": 4376,
+      "stage1_found": 25,
+      "stage3_no_ast_found": 30,
+      "stage3_found": 31
+    },
+    "microsoft_autogen:hard": {
+      "n": 33,
+      "n_snippets": 4376,
+      "stage1_found": 15,
+      "stage3_no_ast_found": 20,
+      "stage3_found": 21
+    },
+    "virattt_ai-hedge-fund:easy": {
+      "n": 35,
+      "n_snippets": 469,
+      "stage1_found": 29,
+      "stage3_no_ast_found": 32,
+      "stage3_found": 32
+    },
+    "virattt_ai-hedge-fund:hard": {
+      "n": 35,
+      "n_snippets": 469,
+      "stage1_found": 25,
+      "stage3_no_ast_found": 25,
+      "stage3_found": 25
+    },
+    "vllm-project_vllm:easy": {
+      "n": 36,
+      "n_snippets": 27849,
+      "stage1_found": 24,
+      "stage3_no_ast_found": 29,
+      "stage3_found": 30
+    },
+    "vllm-project_vllm:hard": {
+      "n": 34,
+      "n_snippets": 27849,
+      "stage1_found": 10,
+      "stage3_no_ast_found": 15,
+      "stage3_found": 16
+    },
+    "xai-org_grok-1:easy": {
+      "n": 34,
+      "n_snippets": 86,
+      "stage1_found": 28,
+      "stage3_no_ast_found": 29,
+      "stage3_found": 29
+    },
+    "xai-org_grok-1:hard": {
+      "n": 33,
+      "n_snippets": 86,
+      "stage1_found": 21,
+      "stage3_no_ast_found": 25,
+      "stage3_found": 25
+    }
+  }
+}

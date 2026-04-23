@@ -1,0 +1,212 @@
+{
+  "overall": {
+    "n": 601,
+    "stage1_found": 489,
+    "stage3_no_ast_found": 480,
+    "stage3_found": 507,
+    "stage2_found": 545,
+    "ast_rescues": 56,
+    "rescues_kept_to_final": 33,
+    "rescues_dropped_by_reranker": 23
+  },
+  "by_repo_split": {
+    "browser-use_browser-use:easy": {
+      "n": 30,
+      "n_snippets": 3023,
+      "stage1_found": 27,
+      "stage2_found": 29,
+      "stage3_no_ast_found": 27,
+      "stage3_found": 29,
+      "ast_rescues": 2,
+      "final_wins": 2,
+      "final_losses": 0
+    },
+    "browser-use_browser-use:hard": {
+      "n": 36,
+      "n_snippets": 3023,
+      "stage1_found": 29,
+      "stage2_found": 34,
+      "stage3_no_ast_found": 28,
+      "stage3_found": 31,
+      "ast_rescues": 5,
+      "final_wins": 4,
+      "final_losses": 1
+    },
+    "deepseek-ai_DeepSeek-V3:easy": {
+      "n": 33,
+      "n_snippets": 42,
+      "stage1_found": 26,
+      "stage2_found": 26,
+      "stage3_no_ast_found": 26,
+      "stage3_found": 26,
+      "ast_rescues": 0,
+      "final_wins": 0,
+      "final_losses": 0
+    },
+    "deepseek-ai_DeepSeek-V3:hard": {
+      "n": 33,
+      "n_snippets": 42,
+      "stage1_found": 26,
+      "stage2_found": 26,
+      "stage3_no_ast_found": 25,
+      "stage3_found": 25,
+      "ast_rescues": 0,
+      "final_wins": 0,
+      "final_losses": 0
+    },
+    "docling-project_docling:easy": {
+      "n": 33,
+      "n_snippets": 1667,
+      "stage1_found": 30,
+      "stage2_found": 32,
+      "stage3_no_ast_found": 30,
+      "stage3_found": 32,
+      "ast_rescues": 2,
+      "final_wins": 2,
+      "final_losses": 0
+    },
+    "docling-project_docling:hard": {
+      "n": 32,
+      "n_snippets": 1667,
+      "stage1_found": 23,
+      "stage2_found": 28,
+      "stage3_no_ast_found": 22,
+      "stage3_found": 25,
+      "ast_rescues": 5,
+      "final_wins": 3,
+      "final_losses": 0
+    },
+    "infiniflow_ragflow:easy": {
+      "n": 34,
+      "n_snippets": 9119,
+      "stage1_found": 27,
+      "stage2_found": 32,
+      "stage3_no_ast_found": 27,
+      "stage3_found": 30,
+      "ast_rescues": 5,
+      "final_wins": 3,
+      "final_losses": 0
+    },
+    "infiniflow_ragflow:hard": {
+      "n": 30,
+      "n_snippets": 9119,
+      "stage1_found": 16,
+      "stage2_found": 27,
+      "stage3_no_ast_found": 16,
+      "stage3_found": 21,
+      "ast_rescues": 11,
+      "final_wins": 5,
+      "final_losses": 0
+    },
+    "karpathy_nanochat:easy": {
+      "n": 33,
+      "n_snippets": 313,
+      "stage1_found": 30,
+      "stage2_found": 31,
+      "stage3_no_ast_found": 29,
+      "stage3_found": 29,
+      "ast_rescues": 1,
+      "final_wins": 0,
+      "final_losses": 0
+    },
+    "karpathy_nanochat:hard": {
+      "n": 34,
+      "n_snippets": 313,
+      "stage1_found": 25,
+      "stage2_found": 26,
+      "stage3_no_ast_found": 24,
+      "stage3_found": 23,
+      "ast_rescues": 1,
+      "final_wins": 0,
+      "final_losses": 1
+    },
+    "microsoft_autogen:easy": {
+      "n": 33,
+      "n_snippets": 4376,
+      "stage1_found": 31,
+      "stage2_found": 32,
+      "stage3_no_ast_found": 31,
+      "stage3_found": 32,
+      "ast_rescues": 1,
+      "final_wins": 1,
+      "final_losses": 0
+    },
+    "microsoft_autogen:hard": {
+      "n": 33,
+      "n_snippets": 4376,
+      "stage1_found": 25,
+      "stage2_found": 31,
+      "stage3_no_ast_found": 24,
+      "stage3_found": 27,
+      "ast_rescues": 6,
+      "final_wins": 4,
+      "final_losses": 1
+    },
+    "virattt_ai-hedge-fund:easy": {
+      "n": 35,
+      "n_snippets": 469,
+      "stage1_found": 34,
+      "stage2_found": 34,
+      "stage3_no_ast_found": 34,
+      "stage3_found": 33,
+      "ast_rescues": 0,
+      "final_wins": 0,
+      "final_losses": 1
+    },
+    "virattt_ai-hedge-fund:hard": {
+      "n": 35,
+      "n_snippets": 469,
+      "stage1_found": 31,
+      "stage2_found": 32,
+      "stage3_no_ast_found": 31,
+      "stage3_found": 31,
+      "ast_rescues": 1,
+      "final_wins": 1,
+      "final_losses": 1
+    },
+    "vllm-project_vllm:easy": {
+      "n": 36,
+      "n_snippets": 27849,
+      "stage1_found": 29,
+      "stage2_found": 33,
+      "stage3_no_ast_found": 29,
+      "stage3_found": 31,
+      "ast_rescues": 4,
+      "final_wins": 2,
+      "final_losses": 0
+    },
+    "vllm-project_vllm:hard": {
+      "n": 34,
+      "n_snippets": 27849,
+      "stage1_found": 20,
+      "stage2_found": 30,
+      "stage3_no_ast_found": 18,
+      "stage3_found": 21,
+      "ast_rescues": 10,
+      "final_wins": 5,
+      "final_losses": 2
+    },
+    "xai-org_grok-1:easy": {
+      "n": 34,
+      "n_snippets": 86,
+      "stage1_found": 32,
+      "stage2_found": 32,
+      "stage3_no_ast_found": 32,
+      "stage3_found": 32,
+      "ast_rescues": 0,
+      "final_wins": 0,
+      "final_losses": 0
+    },
+    "xai-org_grok-1:hard": {
+      "n": 33,
+      "n_snippets": 86,
+      "stage1_found": 28,
+      "stage2_found": 30,
+      "stage3_no_ast_found": 27,
+      "stage3_found": 29,
+      "ast_rescues": 2,
+      "final_wins": 2,
+      "final_losses": 0
+    }
+  }
+}

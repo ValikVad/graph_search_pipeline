@@ -1,0 +1,233 @@
+[
+  {
+    "question": "How does the model represent 8-bit quantized weights so that JAX can treat them as a single pytree node?",
+    "file": "model.py",
+    "line_start": 37,
+    "line_end": 51,
+    "snippet": "@dataclass\nclass QuantizedWeight8bit:\n    weight: jnp.array\n    scales: jnp.array\n\n    @property\n    def shape(self):\n        return self.weight.shape\n\n\ntree_util.register_pytree_node(\n    QuantizedWeight8bit,\n    lambda qw: ([qw.weight, qw.scales], ()),\n    lambda _, children: QuantizedWeight8bit(children[0], children[1]),\n)"
+  },
+  {
+    "question": "How does the partition-rule matcher check whether a named parameter path satisfies a rule specified as a sequence of regex patterns?",
+    "file": "model.py",
+    "line_start": 60,
+    "line_end": 68,
+    "snippet": "def _match(qs, ks):\n    \"\"\"Return True if regexes in qs match any window of strings in tuple ks.\"\"\"\n    # compile regexes and force complete match\n    qts = tuple(map(lambda x: re.compile(x + \"$\"), qs))\n    for i in range(len(ks) - len(qs) + 1):\n        matches = [x.match(y) for x, y in zip(qts, ks[i:])]\n        if matches and all(matches):\n            return True\n    return False"
+  },
+  {
+    "question": "How does the code gracefully skip tensor sharding constraints when no device mesh has been configured?",
+    "file": "model.py",
+    "line_start": 71,
+    "line_end": 75,
+    "snippet": "def with_sharding_constraint(x, constraint):\n    if jax.experimental.maps.thread_resources.env.physical_mesh.empty:\n        return x\n    else:\n        return pjit_sharding_constraint(x, constraint)"
+  },
+  {
+    "question": "How is the feed-forward network hidden dimension computed from the embedding size and widening factor, and what constraint is enforced on the result?",
+    "file": "model.py",
+    "line_start": 85,
+    "line_end": 89,
+    "snippet": "def ffn_size(emb_size, widening_factor):\n    _ffn_size = int(widening_factor * emb_size) * 2 // 3\n    _ffn_size = _ffn_size + (8 - _ffn_size) % 8  # ensure it's a multiple of 8\n    logger.debug(f\"emd_size: {emb_size} adjusted ffn_size: {_ffn_size}\")\n    return _ffn_size"
+  },
+  {
+    "question": "How does the system translate a JAX parameter tree path into a PartitionSpec, and what happens when no rule matches?",
+    "file": "model.py",
+    "line_start": 92,
+    "line_end": 109,
+    "snippet": "def apply_rules(rules):\n    def _apply_rules(path, value):\n        del value  # Unused.\n\n        path_list = [str(i.key).split(\"/\") for i in path if isinstance(i, jax.tree_util.DictKey)]\n        flattened_path = jax.tree_util.tree_flatten(path_list)[0]\n\n        for rule, replacement in rules:\n            if _match(rule, flattened_path):\n                if isinstance(replacement, PartitionSpec):\n                    if \"layer_stack\" in flattened_path:\n                        replacement = PartitionSpec(None, *replacement)\n                rank_logger.debug(f\"Apply {replacement} to {flattened_path} with rule {rule}\")\n                return replacement\n        rank_logger.info(f\"{flattened_path} no matching found!\")\n        return None\n\n    return _apply_rules"
+  },
+  {
+    "question": "What are the sharding assignments for the mixture-of-experts router weights and expert MLP weights?",
+    "file": "model.py",
+    "line_start": 141,
+    "line_end": 160,
+    "snippet": "    # router\n    ((\"router\", \"w\"), P(\"data\")),\n    # moe mlp\n    ((\"moe\", \"linear\", \"w\"), P(None, \"data\", \"model\")),\n    ((\"moe\", \"linear\", \"b\"), P(None)),\n    ((\"moe\", \"linear_v\", \"w\"), P(None, \"data\", \"model\")),\n    ((\"moe\", \"linear_v\", \"b\"), P(None)),\n    ((\"moe\", \"linear_1\", \"w\"), P(None, \"model\", \"data\")),\n    ((\"moe\", \"linear_1\", \"b\"), P(None)),\n    # layer norms\n    ((\"moe\", \"layer_norm\", \"offset\"), P(None)),\n    ((\"moe\", \"layer_norm\", \"scale\"), P(None)),\n    ((\"moe\", \"layer_norm_1\", \"offset\"), P(None)),\n    ((\"moe\", \"layer_norm_1\", \"scale\"), P(None)),\n    # rms norms\n    ((\"moe\", \"rms_norm\", \"scale\"), P(None)),\n    ((\"moe\", \"rms_norm_1\", \"scale\"), P(None)),\n    ((\"moe\", \"rms_norm_2\", \"scale\"), P(None)),\n    ((\"moe\", \"rms_norm_3\", \"scale\"), P(None)),\n]"
+  },
+  {
+    "question": "How is the key-value cache initialised for all transformer layers at once, and what shape does each cache buffer take?",
+    "file": "model.py",
+    "line_start": 184,
+    "line_end": 200,
+    "snippet": "def init_layer_memories(\n    batch_size: int,\n    sequence_len: int,\n    num_kv_heads: int,\n    key_size: int,\n    num_layers: int,\n    step: Optional[jax.Array] = None,\n    dtype=jnp.bfloat16,\n):\n    return [\n        KVMemory(\n            k=jnp.zeros((batch_size, sequence_len, num_kv_heads, key_size), dtype=dtype),\n            v=jnp.zeros((batch_size, sequence_len, num_kv_heads, key_size), dtype=dtype),\n            step=step,\n        )\n        for _ in range(num_layers)\n    ]"
+  },
+  {
+    "question": "How does the expert router compute the probability distribution over experts for each token?",
+    "file": "model.py",
+    "line_start": 230,
+    "line_end": 248,
+    "snippet": "    @hk.transparent\n    def _compute_routing_prob(\n        self,\n        inputs: jax.Array,\n        padding_mask: Optional[jax.Array],\n        num_experts: int,\n    ):\n        # Using fp32 for the routing prob computation.\n        inputs = jax.lax.convert_element_type(inputs, jnp.float32)\n\n        # [batch_size, seq_len, num_experts]\n        routing_logits = self._router_weights(inputs, num_experts, sharding=P(\"data\"))\n        assert routing_logits.dtype == jnp.float32\n        routing_probs = jax.nn.softmax(routing_logits)\n\n        if padding_mask is not None:\n            routing_probs *= padding_mask\n\n        return routing_probs, routing_logits, 0"
+  },
+  {
+    "question": "How does the mixture-of-experts layer dispatch each token to its selected experts and aggregate the results during inference?",
+    "file": "model.py",
+    "line_start": 293,
+    "line_end": 397,
+    "snippet": "    @hk.transparent\n    def _inference_call(self, inputs: jax.Array, padding_mask: Optional[jax.Array] = None):\n        routing_probs, _, _ = self.router.compute_routing_prob(\n            inputs, padding_mask, self.num_experts\n        )\n        expert_gate, expert_index = jax.lax.top_k(routing_probs, k=self.router.num_selected_experts)\n        tmp = jnp.reshape(inputs, (inputs.shape[0] * inputs.shape[1], inputs.shape[2]))\n        broad_inputs = jnp.tile(tmp[:, jnp.newaxis, :], (1, self.router.num_selected_experts, 1))\n        broad_inputs = jnp.reshape(\n            broad_inputs, (broad_inputs.shape[0] * broad_inputs.shape[1], broad_inputs.shape[2])\n        )\n        init_fn, _ = hk.transform(self.layer_fn)\n        vmapped_init_fn = jax.vmap(init_fn, in_axes=0, out_axes=0)\n        lifted_init_fn = hk.experimental.transparent_lift(vmapped_init_fn)\n        # Fetch the vmapped params of the DenseBlock.\n        params = lifted_init_fn(\n            jax.random.split(jax.random.PRNGKey(1), self.num_experts),\n            jnp.zeros((self.num_experts, 1, 1, inputs.shape[-1])),\n        )"
+  },
+  {
+    "question": "How does the KV-cache memory sharding specification describe which mesh axes hold the cached keys and values?",
+    "file": "model.py",
+    "line_start": 476,
+    "line_end": 486,
+    "snippet": "    def get_memory_sharding(self):\n        return Memory(\n            layers=[\n                KVMemory(\n                    k=P(self.data_axis, self.model_axis),\n                    v=P(self.data_axis, self.model_axis),\n                    step=P(self.data_axis),\n                )\n                for _ in range(self.num_layers)\n            ],\n        )"
+  },
+  {
+    "question": "How is RMS normalisation applied to activations, including the handling of the learned scale parameter?",
+    "file": "model.py",
+    "line_start": 600,
+    "line_end": 624,
+    "snippet": "    def __call__(self, inputs: jax.Array):\n        fprop_dtype = inputs.dtype\n        param_shape = (inputs.shape[-1],)\n        if self.create_scale:\n            scale = hk.get_parameter(\n                \"scale\",\n                param_shape,\n                dtype=jnp.float32,\n                init=hk.initializers.Constant(0),\n            )\n            if self.sharding:\n                scale = with_sharding_constraint(scale, self.sharding)\n            scale = jnp.broadcast_to(scale.astype(jnp.float32), inputs.shape)\n        else:\n            scale = 1.0\n        inputs = inputs.astype(jnp.float32)\n        scale = scale.astype(jnp.float32)\n        mean_squared = jnp.mean(jnp.square(inputs), axis=[-1], keepdims=True)\n        mean_squared = jnp.broadcast_to(mean_squared, inputs.shape)\n\n        normed_inputs = inputs * jax.lax.rsqrt(mean_squared + self.eps)\n\n        outputs = scale * normed_inputs\n\n        return outputs.astype(fprop_dtype)"
+  },
+  {
+    "question": "How are rotary position embeddings applied to query and key vectors, accounting for a per-batch position offset?",
+    "file": "model.py",
+    "line_start": 655,
+    "line_end": 691,
+    "snippet": "    def __call__(\n        self,\n        x: jax.Array,\n        seq_dim: int,\n        offset: jax.Array,\n        const_position: Optional[int] = None,\n        t: Optional[jax.Array] = None,\n    ) -> jax.Array:\n        fprop_dtype = x.dtype\n        # Compute the per-dimension frequencies\n        exponents = jnp.arange(0, self.dim, 2, dtype=jnp.float32)\n        inv_freq = jnp.asarray(\n            1.0 / (self.base_exponent ** (exponents / self.dim)), dtype=jnp.float32\n        )\n\n        if jnp.shape(offset) == ():\n            # Offset can be a scalar or one offset per batch element.\n            offset = jnp.expand_dims(offset, 0)\n\n        # Compute the per element phase (to pass into sin and cos)\n        if const_position:\n            t = const_position * jnp.ones(\n                (\n                    1,\n                    x.shape[seq_dim],\n                ),\n                dtype=jnp.float32,\n            )\n        elif t is None:\n            t = jnp.arange(x.shape[seq_dim], dtype=jnp.float32) + jnp.expand_dims(offset, -1)\n        phase = jnp.einsum(\"bi,j->bij\", t, inv_freq)\n        phase = jnp.tile(phase, reps=(1, 2))[:, :, None, :]\n\n        x = x * jnp.cos(phase) + rotate_half(x) * jnp.sin(phase)\n        x = x.astype(fprop_dtype)\n\n        return x"
+  },
+  {
+    "question": "How are new key and value vectors written into the cached context, and how is the memory mask updated to reflect the current fill level?",
+    "file": "model.py",
+    "line_start": 809,
+    "line_end": 844,
+    "snippet": "        if kv_memory:\n            if mesh is not None:\n\n                @functools.partial(\n                    shard_map,\n                    mesh=mesh,\n                    in_specs=(\n                        P(\"data\", None, \"model\"),\n                        P(\"data\"),\n                        P(\"data\", None, \"model\"),\n                    ),\n                    out_specs=P(\"data\", None, \"model\"),\n                    check_rep=False,\n                )\n                def update_into_shmap(mems, starts, updates):\n                    return update_into(mems, starts, updates)\n\n                key_heads = update_into_shmap(kv_memory.k, kv_memory.step, key_heads)\n                value_heads = update_into_shmap(kv_memory.v, kv_memory.step, value_heads)\n            else:\n                key_heads = update_into(kv_memory.k, kv_memory.step, key_heads)\n                value_heads = update_into(kv_memory.v, kv_memory.step, value_heads)\n\n            new_step = kv_memory.step + sequence_length\n            memory_mask = jnp.arange(kv_memory.k.shape[1]) < new_step[:, None]\n            memory_mask = memory_mask[:, None, None, :]  # [B, H, T, T]\n            if mask is not None:\n                mask = memory_mask * mask\n            else:\n                mask = memory_mask\n\n            new_memory = KVMemory(\n                k=key_heads,\n                v=value_heads,\n                step=new_step,\n            )"
+  },
+  {
+    "question": "How are attention logits clamped to prevent numerical overflow before the softmax is applied?",
+    "file": "model.py",
+    "line_start": 858,
+    "line_end": 876,
+    "snippet": "        # Compute attention weights.\n        # Attention softmax is always carried out in fp32.\n        attn_logits = jnp.einsum(\"...thHd,...Thd->...hHtT\", query_heads, key_heads).astype(\n            jnp.float32\n        )\n        attn_logits *= self.attn_output_multiplier\n        max_attn_val = jnp.array(30.0, dtype=attn_logits.dtype)\n        attn_logits = max_attn_val * jnp.tanh(attn_logits / max_attn_val)\n\n        mask = mask[:, :, None, :, :]\n\n        if mask is not None:\n            if mask.ndim != attn_logits.ndim:\n                raise ValueError(\n                    f\"Mask dimensionality {mask.ndim} must match logits dimensionality \"\n                    f\"{attn_logits.ndim} for {mask.shape}/{attn_logits.shape}.\"\n                )\n            attn_logits = jnp.where(mask, attn_logits, -1e30)"
+  },
+  {
+    "question": "How does the feed-forward block inside a decoder layer use a gated linear unit activation?",
+    "file": "model.py",
+    "line_start": 972,
+    "line_end": 1007,
+    "snippet": "    @hk.transparent\n    def __call__(\n        self,\n        inputs: jax.Array,  # [B, T, D]\n    ) -> jax.Array:  # [B, T, D]\n        _, _, model_size = inputs.shape\n        h_v = Linear(\n            ffn_size(\n                model_size,\n                self.widening_factor,\n            ),\n            with_bias=False,\n            mesh=self.mesh,\n            sharding=P(\"data\", \"model\"),\n            name=\"linear_v\",\n        )(inputs)\n        h_w1 = jax.nn.gelu(\n            Linear(\n                ffn_size(\n                    model_size,\n                    self.widening_factor,\n                ),\n                with_bias=False,\n                mesh=self.mesh,\n                sharding=P(\"data\", \"model\"),\n            )(inputs)\n        )\n        h_dense = Linear(\n            model_size,\n            with_bias=False,\n            sharding=P(\"model\", \"data\"),\n            mesh=self.mesh,\n            shard_axis=1,\n        )(h_w1 * h_v)\n\n        return h_dense"
+  },
+  {
+    "question": "How does a decoder layer decide between using a mixture-of-experts block and a plain dense feed-forward block?",
+    "file": "model.py",
+    "line_start": 1074,
+    "line_end": 1097,
+    "snippet": "        if self.num_experts > 1:\n            rank_logger.debug(\"Using MoE!\")\n            router = Router(\n                num_selected_experts=self.num_selected_experts,\n                shard_activations=self.shard_activations,\n                data_axis=self.data_axis,\n                model_axis=self.model_axis,\n                mesh=self.mesh,\n            )\n            h_dense = MoELayer(\n                num_experts=self.num_experts,\n                mesh=self.mesh,\n                layer_fn=base_dense_block,\n                router=router,\n                shard_activations=self.shard_activations,\n                data_axis=self.data_axis,\n                model_axis=self.model_axis,\n            )(layer_norm(h), padding_mask)\n        else:\n            h_dense = base_dense_block(layer_norm(h))\n\n        h_dense = layer_norm(h_dense)\n        h += h_dense\n        h = with_sharding_constraint(h, sharding)"
+  },
+  {
+    "question": "How does the model reuse the same weight matrix for both token embedding lookup and output projection to vocabulary logits?",
+    "file": "model.py",
+    "line_start": 1127,
+    "line_end": 1143,
+    "snippet": "    @property\n    def embeddings(self):\n        embed_mat = hk.get_parameter(\n            \"embeddings\",\n            [self.vocab_size, self.embed_dim],\n            dtype=jnp.float32,\n            init=hk.initializers.Constant(0),\n        )\n        if self.sharding:\n            embed_mat = with_sharding_constraint(embed_mat, self.sharding)\n        return embed_mat\n\n    def decode(\n        self,\n        inputs: jax.Array,\n    ) -> jax.Array:\n        return jnp.dot(inputs, self.embeddings.T.astype(inputs.dtype))"
+  },
+  {
+    "question": "How does the language model's forward pass scale input embeddings and output logits, and how is the causal mask derived from the token sequence?",
+    "file": "model.py",
+    "line_start": 1219,
+    "line_end": 1279,
+    "snippet": "    def __call__(\n        self,\n        tokens: jax.Array,\n        memory: Optional[Memory] = None,\n        *,\n        batch: Dict[str, jax.Array] = {},\n        last_hid_only: bool = False,\n        length: Optional[jax.Array] = None,\n    ) -> LanguageModelOutput:\n        \"\"\"Forward pass, producing a sequence of logits.\"\"\"\n        del batch  # Unused.\n\n        config = self.config\n\n        input_mask = jnp.greater(tokens, config.pad_token)\n\n        # Embed the input tokens and positions.\n        in_out_embed = InOutEmbed(\n            self.config.vocab_size,\n            embed_dim=self.config.model_size,\n            sharding=P(None, (\"data\", \"model\")),\n        )\n        input_embeddings = in_out_embed(tokens).astype(config.fprop_dtype)\n        input_embeddings = with_sharding_constraint(\n            input_embeddings, P(\"data\", None, self.model.model_axis)\n        )\n        input_embeddings *= config.embedding_multiplier_scale\n\n        model_output = self.model(\n            input_embeddings,\n            input_mask,\n            memory=memory,\n        )  # [B, T, D]\n        embeddings, model_state = model_output.embeddings, model_output.memory\n        if self.model.shard_activations:\n            embeddings = with_sharding_constraint(\n                embeddings, P(\"data\", None, self.model.model_axis)\n            )\n        else:\n            embeddings = with_sharding_constraint(embeddings, P(\"data\", None))\n        rank_logger.debug(f\"Final embedding shape: {embeddings.shape}\")\n        embeddings = layer_norm(embeddings, self.model)\n        assert embeddings.dtype == self.fprop_dtype\n\n        if last_hid_only:\n            last_step = jnp.maximum(jnp.sum(input_mask.astype(jnp.int32), axis=1) - 1, 0)\n            last_hid = jax.vmap(lambda x, i: x[i], in_axes=0, out_axes=0)(embeddings, last_step)\n            return last_hid\n\n        if length is not None:\n            last_step = jnp.maximum(length.astype(jnp.int32) - 1, 0)\n            embeddings = jax.vmap(lambda x, i: x[i], in_axes=0, out_axes=0)(embeddings, last_step)\n            embeddings = jnp.expand_dims(embeddings, axis=1)\n\n        # Decode the embeddings (here, we use tied weights).\n        rank_logger.info(embeddings.shape)\n        out = in_out_embed.decode(embeddings)\n        rank_logger.info(out.shape)\n        out *= config.output_multiplier_scale\n\n        if self.model.shard_activations:\n            out = with_sharding_constraint(out, P(\"data\", None, self.model.model_axis))\n        else:\n            out = with_sharding_constraint(out, P(\"data\", None))\n\n        return LanguageModelOutput(\n            logits=out,\n            model_state=model_state,\n        )"
+  },
+  {
+    "question": "How does the transformer stack construct and combine causal and padding masks before feeding them to each decoder layer?",
+    "file": "model.py",
+    "line_start": 1326,
+    "line_end": 1343,
+    "snippet": "    def __call__(\n        self,\n        embeddings: jax.Array,  # [B, T, D]\n        mask: jax.Array,  # [B, T]\n        memory: Optional[Memory],\n    ) -> TransformerOutput:\n        \"\"\"Transforms input embedding sequences to output embedding sequences.\"\"\"\n\n        fprop_dtype = embeddings.dtype\n        _, seq_len, model_size = embeddings.shape\n        padding_mask = mask.copy()\n        mask = mask[:, None, None, :]  # [B, H=1, T'=1, T]\n\n        # Compute causal mask for autoregressive sequence modelling.\n        causal_mask = jnp.tril(jnp.ones((1, 1, seq_len, seq_len))).astype(\n            fprop_dtype\n        )  # [B=1, H=1, T, T]\n        mask = mask * causal_mask  # [B, H=1, T, T]"
+  },
+  {
+    "question": "How does the transformer loop over layers, feed each layer the correct KV cache slice, and collect the updated cache?",
+    "file": "model.py",
+    "line_start": 1380,
+    "line_end": 1398,
+    "snippet": "        for i in range(self.num_layers):\n            decoder_output = block(\n                h,\n                mask,\n                padding_mask,\n                memory.layers[i] if memory else None,\n                layer_index=i,\n                name=f\"decoder_layer_{i}\",\n            )\n            h, new_kv_memory = (\n                decoder_output.embeddings,\n                decoder_output.memory,\n            )\n            kv_memories.append(new_kv_memory)\n\n        return TransformerOutput(\n            embeddings=h,\n            memory=Memory(layers=kv_memories),\n        )"
+  },
+  {
+    "question": "How does nucleus (top-p) sampling determine the probability threshold and mask out low-probability tokens?",
+    "file": "runners.py",
+    "line_start": 84,
+    "line_end": 97,
+    "snippet": "def top_p_filter(logits: jax.Array, top_p: jax.Array) -> jax.Array:\n    \"\"\"Performs nucleus filtering on logits.\"\"\"\n    assert logits.ndim == top_p.ndim, f\"Expected {logits.ndim} equal {top_p.ndim}\"\n    sorted_logits = jax.lax.sort(logits, is_stable=False)\n    sorted_probs = jax.nn.softmax(sorted_logits)\n    threshold_idx = jnp.argmax(jnp.cumsum(sorted_probs, -1) >= 1 - top_p, axis=-1)\n    threshold_largest_logits = jnp.take_along_axis(\n        sorted_logits, threshold_idx[..., jnp.newaxis], axis=-1\n    )\n    assert threshold_largest_logits.shape == logits.shape[:-1] + (1,)\n    mask = logits >= threshold_largest_logits\n    # Set unused logits to -inf.\n    logits = jnp.where(mask, logits, -1e10)\n    return logits"
+  },
+  {
+    "question": "How does the token sampling step apply temperature, allowed-token masking, nucleus filtering, and then draw a single token?",
+    "file": "runners.py",
+    "line_start": 100,
+    "line_end": 133,
+    "snippet": "def sample_token(\n    rngs: jax.random.PRNGKey,\n    lm_outputs: LanguageModelOutput,\n    settings: SampleSettings,\n) -> SampleOutput:\n    # Expand the settings shape to match the logit shape.\n    settings = SampleSettings(\n        temperature=jnp.expand_dims(settings.temperature, (1, 2)),  # Input [B], output [B, 1, 1].\n        nucleus_p=jnp.expand_dims(settings.nucleus_p, (1, 2)),  # Input [B], output [B, 1, 1].\n        mask=jnp.expand_dims(settings.mask, 1),  # Input [B, V], output [B, 1, V].\n        active=settings.active,  # [B].\n    )\n    logits = lm_outputs.logits / settings.temperature.astype(lm_outputs.logits.dtype)\n    # Mask out all disallowed tokens by assigning them a near-zero probability.\n    logits = jnp.where(settings.mask, logits, -1e10)\n    # Mask out all tokens that don't fall into the p-th percentile.\n    logits = top_p_filter(logits, settings.nucleus_p.astype(logits.dtype))\n\n    new_token = jax.vmap(jax.random.categorical)(rngs, logits)\n\n    probabilities = jax.nn.softmax(logits)\n    token_prob = jnp.take_along_axis(probabilities, jnp.expand_dims(new_token, 1), axis=2)\n    token_prob = jnp.squeeze(token_prob, 1)\n\n    # Gather the top-k tokens and probabilities.\n    top_k_probs, top_k_token_ids = jax.lax.top_k(probabilities, TOP_K)\n    top_k_probs = jnp.squeeze(top_k_probs, 1)\n    top_k_token_ids = jnp.squeeze(top_k_token_ids, 1)\n    return SampleOutput(\n        new_token,\n        token_prob,\n        top_k_token_ids,\n        top_k_probs,\n    )"
+  },
+  {
+    "question": "How is the global batch size derived from the per-device batch size across local GPUs and multi-host replicas?",
+    "file": "runners.py",
+    "line_start": 159,
+    "line_end": 191,
+    "snippet": "    def initialize(\n        self,\n        init_data,\n        local_mesh_config: tuple[int, int],\n        between_hosts_config: tuple[int, int],\n    ):\n        num_replicas = math.prod(between_hosts_config)\n        self.model.initialize()\n        self.model.fprop_dtype = jnp.bfloat16\n        num_local_gpus = len(jax.local_devices())\n\n        # Calculate the global batch size from the local batch size.\n        self.batch_size = int(self.bs_per_device * num_local_gpus * num_replicas)\n\n        # Calculate the batch size per host from the global batch size.\n        self.local_batch_size = self.batch_size // jax.process_count()\n\n        self.local_mesh_config = local_mesh_config\n        self.between_hosts_config = between_hosts_config\n        rank_logger.info(\n            f\"Initializing mesh for {self.local_mesh_config=} {self.between_hosts_config=}...\"\n        )\n        self.mesh = make_mesh(self.local_mesh_config, self.between_hosts_config)\n        self.forward = self.make_forward_fn(mesh=self.mesh)\n        self.logits_fn = hk.transform(lambda tokens: self.forward(tokens)[0])\n\n        self.eval_forward = self.make_forward_fn(mesh=self.mesh)\n        self.logits_eval_fn = hk.transform(lambda tokens: self.eval_forward(tokens)[0])\n\n        if self.transform_forward:\n            self.state_sharding = self.get_state_sharding(init_data)\n            rank_logger.info(f\"State sharding type: {type(self.state_sharding)}\")\n            self.init_fn = pjit.pjit(self.init, out_shardings=self.state_sharding)"
+  },
+  {
+    "question": "How does the system decide whether to restore model parameters from a checkpoint or initialise them from scratch?",
+    "file": "runners.py",
+    "line_start": 212,
+    "line_end": 249,
+    "snippet": "    def load_or_init(\n        self,\n        init_data: Any,\n        from_checkpoint: bool = True,\n        init_fn: Optional[Callable] = None,\n    ):\n        rng = jax.random.PRNGKey(self.rng_seed)\n\n        if not self.checkpoint_path or not from_checkpoint:\n            rank_logger.info(\"Initializing model...\")\n            with self.mesh:\n                if init_fn is not None:\n                    state = init_fn(rng, init_data)\n                else:\n                    assert self.transform_forward\n                    state = self.init_fn(rng, init_data)\n            rank_logger.info(\"Model state is newly initialized.\")\n        else:\n            with self.mesh:\n                if init_fn:\n                    state_shapes = jax.eval_shape(init_fn, rng, init_data)\n                else:\n                    assert self.transform_forward\n                    state_shapes = jax.eval_shape(self.init_fn, rng, init_data)\n            init_state = None\n\n            state = xai_checkpoint.restore(\n                checkpoint_path=self.checkpoint_path,\n                state_shapes=state_shapes,\n                mesh=self.mesh,\n                between_hosts_config=self.between_hosts_config,\n                state_sharding=self.state_sharding,\n                init_state=init_state,\n                params_only=True,\n            )\n\n            del init_state\n        return state"
+  },
+  {
+    "question": "How does the inference runner select the correct bucket size to pad a prompt to, to avoid recompilation for every distinct length?",
+    "file": "runners.py",
+    "line_start": 271,
+    "line_end": 273,
+    "snippet": "    def get_pad_bucket(self, size):\n        i = bisect.bisect_left(self.pad_sizes, size)\n        return self.pad_sizes[min(i, len(self.pad_sizes) - 1)]"
+  },
+  {
+    "question": "How does the inference runner process a prompt into the KV cache, override the step counter manually, and sample the first output token?",
+    "file": "runners.py",
+    "line_start": 333,
+    "line_end": 393,
+    "snippet": "        def hk_prefill_memory(\n            rngs,\n            memory,\n            settings,\n            last_output,\n            prompt,\n            length,\n            rng_seed,\n            new_settings,\n            i,\n        ):\n            rng = jax.random.PRNGKey(seed=rng_seed)\n            rng, rng_ = jax.random.split(rng)\n\n            # Allocate new memory for this sample. The memory length is equal to the length of the\n            # prompt.\n            slice = hk_new_memory(1, prompt.shape[0])\n\n            # Move the settings for this individual batch entry into the joint settings tensor.\n            settings = jax.tree_map(\n                lambda o, v: jax.lax.dynamic_update_index_in_dim(o, v, i, axis=0),\n                settings,\n                new_settings,\n            )\n\n            # Get the settings for the batch entry from the joint settings tensor.\n            settings_slice = jax.tree_map(lambda t: jnp.expand_dims(t[i], axis=0), settings)\n\n            # Process the first n-1 tokens of the prompt.\n            lm_outputs = hk_forward(\n                jnp.expand_dims(prompt, 0),\n                memory=slice,\n                length=jnp.expand_dims(length, 0),\n                active=settings_slice.active,\n            )\n\n            # The forward pass doesn't correctly set the `step` counter inside the memory. Manually\n            # override it so `hk_forward` uses the correct context length in the next call.\n            slice = lm_outputs.model_state\n            slice = slice._replace(\n                layers=[l._replace(step=jnp.array([length])) for l in slice.layers]\n            )\n\n            # Sample the actual output token.\n            rng_ = jnp.expand_dims(rng_, 0)\n            new_output = sample_token(rng_, lm_outputs, settings_slice)\n\n            # Update the KV cache/memory.\n            slice = jax.tree_map(pad_to_max_len, slice)\n            memory = insert_slice(memory, slice, length, i)\n\n            rng = jnp.expand_dims(rng, 0)\n            rngs = jax.lax.dynamic_update_index_in_dim(rngs, rng, i, axis=0)\n\n            # Move the network outputs for this batch entry into the joint output tensor.\n            last_output = jax.tree_util.tree_map(\n                lambda last, new: jax.lax.dynamic_update_index_in_dim(last, new, i, axis=0),\n                last_output,\n                new_output,\n            )\n            return rngs, last_output, memory, settings"
+  },
+  {
+    "question": "How are the three JAX-compiled inference kernels (prefill, sample step, new memory) wrapped with sharding constraints before the generation loop starts?",
+    "file": "runners.py",
+    "line_start": 411,
+    "line_end": 440,
+    "snippet": "        ds = P(\"data\")\n        ms = runner.model.model.get_memory_sharding()\n        self.sample_step = pjit.pjit(\n            sample_step_.apply,\n            in_shardings=(self.params_sharding, None, ds, ms, None),\n            out_shardings=(None, ds, ms),\n            donate_argnums=3,\n        )\n        self.prefill_memory = pjit.pjit(\n            functools.partial(prefill_memory_.apply),\n            in_shardings=(\n                self.params_sharding,\n                None,\n                ms,\n                None,\n                ds,\n                None,\n                None,\n                None,\n                None,\n                None,\n            ),\n            out_shardings=(None, ds, ms, None),\n            donate_argnums=(2,),\n        )\n        self.new_memory = pjit.pjit(\n            new_memory_.apply,\n            static_argnums=(1, 2),\n            out_shardings=ms,\n        )"
+  },
+  {
+    "question": "How does the generation loop decide when a request is finished, mark its slot as free, and deactivate that batch entry?",
+    "file": "runners.py",
+    "line_start": 556,
+    "line_end": 577,
+    "snippet": "                for i in range(batch_size):\n                    if requests[i] is not None:\n                        if first_output[i] is not None:\n                            first_output_i = jax.tree_map(np.array, first_output[i])\n                            all_tokens.append(int(first_output_i.token_id[i][0]))\n                            first_output[i] = None\n                            continue\n\n                        all_tokens.append(int(prev_token.token_id[i][0]))\n                        cont = len(all_tokens) < requests[i].max_len\n\n                        if not cont:\n                            output_str = self.tokenizer.decode(all_tokens)\n                            requests[i] = None\n                            free_slots.append(i)\n                            all_tokens = []\n                            settings = settings._replace(active=settings.active.at[i].set(0))\n                            yield output_str"
+  },
+  {
+    "question": "How does the device mesh construction combine per-host GPU topology with a multi-host grid to name the data and model axes?",
+    "file": "runners.py",
+    "line_start": 580,
+    "line_end": 593,
+    "snippet": "def make_mesh(\n    local_mesh_config: tuple[int, ...], between_hosts_config: tuple[int, ...]\n) -> jax.sharding.Mesh:\n    assert len(local_mesh_config) == 2\n    assert len(between_hosts_config) == 2\n    rank_logger.info(\"Detected %s devices in mesh\", jax.device_count())\n    device_mesh = mesh_utils.create_hybrid_device_mesh(\n        local_mesh_config,\n        between_hosts_config,\n        devices=jax.devices(),\n        process_is_granule=True,\n    )\n    rank_logger.debug(re.sub(\"\\n+\", \"\\n\", f\"Job device mesh is:\\n{device_mesh}\"))\n    return jax.sharding.Mesh(device_mesh, (\"data\", \"model\"))"
+  },
+  {
+    "question": "How does the checkpoint loader use shared memory to accelerate deserialisation of large pickle tensor files?",
+    "file": "checkpoint.py",
+    "line_start": 42,
+    "line_end": 74,
+    "snippet": "@contextlib.contextmanager\ndef copy_to_shm(file: str):\n    if file.startswith(\"/dev/shm/\"):\n        # Nothing to do, the file is already in shared memory.\n        yield file\n        return\n\n    tmp_dir = \"/dev/shm/\"\n    fd, tmp_path = tempfile.mkstemp(dir=tmp_dir)\n    try:\n        shutil.copyfile(file, tmp_path)\n        yield tmp_path\n    finally:\n        os.remove(tmp_path)\n        os.close(fd)\n\n\n@contextlib.contextmanager\ndef copy_from_shm(file: str):\n    tmp_dir = \"/dev/shm/\"\n    fd, tmp_path = tempfile.mkstemp(dir=tmp_dir)\n    try:\n        yield tmp_path\n        shutil.copyfile(tmp_path, file)\n    finally:\n        os.remove(tmp_path)\n        os.close(fd)\n\n\ndef fast_unpickle(path: str) -> Any:\n    with copy_to_shm(path) as tmp_path:\n        with open(tmp_path, \"rb\") as f:\n            return pickle.load(f)"
+  },
+  {
+    "question": "How does the tensor loader decide which shard files to read for the current process and which tensors to fill with zeros as placeholders?",
+    "file": "checkpoint.py",
+    "line_start": 83,
+    "line_end": 107,
+    "snippet": "def load_tensors(shaped_arrays, directory, mesh_config, tensor_indices=None):\n    \"\"\"Loads a set of arrays.\"\"\"\n    pool = ThreadPoolExecutor(max_workers=32)\n    fs = list()\n    num_tensors = 0\n    num_replicas = 1\n    data_model_shards = math.prod(mesh_config)\n    if tensor_indices is None:\n        iterator = enumerate(shaped_arrays)\n    else:\n        iterator = zip(tensor_indices, shaped_arrays)\n    for i, t in iterator:\n        if (i % num_replicas) == ((jax.process_index() // data_model_shards) % num_replicas):\n            idx = (\n                jax.process_index() // (num_replicas * data_model_shards) * data_model_shards\n                + jax.process_index() % data_model_shards\n            )\n            fs.append(\n                pool.submit(fast_unpickle, os.path.join(directory, f\"tensor{i:05d}_{idx:03d}\"))\n            )\n            num_tensors += 1\n        else:\n            fs.append(pool.submit(np.zeros, t.shape, dtype=t.dtype))\n    wait(fs)\n    return [f.result() for f in fs]"
+  },
+  {
+    "question": "How does the restore function validate that checkpoint parameter keys exactly match the expected model parameter keys before loading?",
+    "file": "checkpoint.py",
+    "line_start": 180,
+    "line_end": 221,
+    "snippet": "def restore(\n    checkpoint_path: str,\n    state_shapes: Any,\n    mesh,\n    between_hosts_config,\n    params_only,\n    state_sharding,\n    init_state: Optional[Any] = None,\n) -> Any:\n    ckpt_path = os.path.join(checkpoint_path, \"ckpt-0\")\n\n    rank_logger.info(\"Loading checkpoint at {}\".format(ckpt_path))\n    ckpt_shapes = state_shapes\n    ckpt_shapes_with_path, structure = jax.tree_util.tree_flatten_with_path(ckpt_shapes)\n\n    ckpt_shapes_flat = [elem[1] for elem in ckpt_shapes_with_path]\n    loaded_tensors = load_tensors(ckpt_shapes_flat, ckpt_path, between_hosts_config)\n\n    state = jax.tree_util.tree_unflatten(structure, loaded_tensors)\n\n    # Sanity check to give a better error message.\n    ckpt_keys = set(state.params.keys())\n    code_keys = set(state_sharding.params.keys())\n\n    if ckpt_keys != code_keys and init_state is None:\n        missing_in_ckpt = code_keys - ckpt_keys\n        missing_locally = ckpt_keys - code_keys\n        raise ValueError(\n            \"Parameters in the code are not matching checkpoint parameters.\\n\"\n            \"Params missing in checkpoint: {}\\nParams missing in code: {}\".format(\n                missing_in_ckpt, missing_locally\n            )\n        )\n    state_sharding = jax.tree_util.tree_map(\n        lambda x: jax.sharding.PartitionSpec() if x is None else x,\n        state_sharding,\n        is_leaf=lambda x: x is None,\n    )\n    state = multihost_utils.host_local_array_to_global_array(state, mesh, state_sharding)\n    if params_only:\n        state = state.params\n    return state"
+  },
+  {
+    "question": "What are the concrete architectural hyperparameters (layer count, head counts, embedding size, experts) used to configure the model in the example script?",
+    "file": "run.py",
+    "line_start": 25,
+    "line_end": 62,
+    "snippet": "    grok_1_model = LanguageModelConfig(\n        vocab_size=128 * 1024,\n        pad_token=0,\n        eos_token=2,\n        sequence_len=8192,\n        embedding_init_scale=1.0,\n        output_multiplier_scale=0.5773502691896257,\n        embedding_multiplier_scale=78.38367176906169,\n        model=TransformerConfig(\n            emb_size=48 * 128,\n            widening_factor=8,\n            key_size=128,\n            num_q_heads=48,\n            num_kv_heads=8,\n            num_layers=64,\n            attn_output_multiplier=0.08838834764831845,\n            shard_activations=True,\n            # MoE.\n            num_experts=8,\n            num_selected_experts=2,\n            # Activation sharding.\n            data_axis=\"data\",\n            model_axis=\"model\",\n        ),\n    )\n    inference_runner = InferenceRunner(\n        pad_sizes=(1024,),\n        runner=ModelRunner(\n            model=grok_1_model,\n            bs_per_device=0.125,\n            checkpoint_path=CKPT_PATH,\n        ),\n        name=\"local\",\n        load=CKPT_PATH,\n        tokenizer_path=\"./tokenizer.model\",\n        local_mesh_config=(1, 8),\n        between_hosts_config=(1, 1),\n    )"
+  }
+]

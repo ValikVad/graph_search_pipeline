@@ -1,0 +1,66 @@
+digraph graphsearch_architecture {
+  graph [
+    rankdir=TB,
+    bgcolor="#f8fafc",
+    pad="0.35",
+    nodesep="0.45",
+    ranksep="0.6"
+  ];
+
+  node [
+    shape=plain,
+    fontname="Helvetica",
+    margin=0
+  ];
+
+  edge [
+    color="#475569",
+    penwidth=1.8,
+    arrowsize=0.8
+  ];
+
+  snippets [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="12" BGCOLOR="#ffffff" COLOR="#cbd5e1">
+      <TR><TD FIXEDSIZE="TRUE" WIDTH="96" HEIGHT="96"><IMG SRC="figures/architecture/icons/file-text.svg" SCALE="TRUE"/></TD></TR>
+      <TR><TD><FONT POINT-SIZE="20"><B>Codebase snippets</B></FONT></TD></TR>
+    </TABLE>
+  >];
+
+  query [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="12" BGCOLOR="#ffffff" COLOR="#cbd5e1">
+      <TR><TD FIXEDSIZE="TRUE" WIDTH="96" HEIGHT="96"><IMG SRC="figures/architecture/icons/user.svg" SCALE="TRUE"/></TD></TR>
+      <TR><TD><FONT POINT-SIZE="20"><B>User query</B></FONT></TD></TR>
+    </TABLE>
+  >];
+
+  dual [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="12" BGCOLOR="#eef4ff" COLOR="#93c5fd">
+      <TR><TD FIXEDSIZE="TRUE" WIDTH="96" HEIGHT="96"><IMG SRC="figures/architecture/icons/file-search.svg" SCALE="TRUE"/></TD></TR>
+      <TR><TD><FONT POINT-SIZE="20"><B>Dual encoder</B></FONT></TD></TR>
+    </TABLE>
+  >];
+
+  ast [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="12" BGCOLOR="#fff7ed" COLOR="#fdba74">
+      <TR><TD FIXEDSIZE="TRUE" WIDTH="96" HEIGHT="96"><IMG SRC="figures/architecture/icons/git-branch.svg" SCALE="TRUE"/></TD></TR>
+      <TR><TD><FONT POINT-SIZE="20"><B>AST Expansion</B></FONT></TD></TR>
+      <TR><TD><FONT POINT-SIZE="14">Out = In &#8746; {Neighbour(i) | i &#8712; In}</FONT></TD></TR>
+    </TABLE>
+  >];
+
+  cross [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="12" BGCOLOR="#ecfdf5" COLOR="#86efac">
+      <TR><TD FIXEDSIZE="TRUE" WIDTH="96" HEIGHT="96"><IMG SRC="figures/architecture/icons/settings.svg" SCALE="TRUE"/></TD></TR>
+      <TR><TD><FONT POINT-SIZE="20"><B>Cross encoder</B></FONT></TD></TR>
+    </TABLE>
+  >];
+
+  finalrank [label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="12" BGCOLOR="#fef2f2" COLOR="#fca5a5">
+      <TR><TD FIXEDSIZE="TRUE" WIDTH="96" HEIGHT="96"><IMG SRC="figures/architecture/icons/chart.svg" SCALE="TRUE"/></TD></TR>
+      <TR><TD><FONT POINT-SIZE="20"><B>Final rank</B></FONT></TD></TR>
+    </TABLE>
+  >];
+
+  snippets -> query -> dual -> ast -> cross -> finalrank;
+}
