@@ -26,12 +26,10 @@ from pipeline.expander import ASTNeighborExpander
 from pipeline.index import SnippetIndex
 from pipeline.reranker import CrossEncoderReranker
 
-REPOS_DIR    = Path("python_repos")
-QUESTIONS_DIR     = Path("questions")
+REPOS_DIR          = Path("python_repos")
+QUESTIONS_DIR      = Path("questions")
 QUESTIONS_HARD_DIR = Path("questions_hard")
-AST_CACHE_DIR = Path("ast_cache")
-REPORTS_DIR   = Path("reports")
-FULL_REPORTS_DIR = Path("full_reports")
+AST_CACHE_DIR      = Path("ast_cache")
 
 
 def repos_with_questions() -> list[str]:
@@ -46,8 +44,12 @@ def run(
     cfg: PipelineConfig,
     skip_parse: bool,
     verbose: bool,
+    output_dir: Path = Path("reports"),
 ) -> None:
-    REPORTS_DIR.mkdir(exist_ok=True)
+    reports_dir      = output_dir
+    full_reports_dir = output_dir / "full"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    full_reports_dir.mkdir(parents=True, exist_ok=True)
     device = cfg.resolved_device()
 
     # shared cross-encoder (heavy to load — reuse across repos)
@@ -106,13 +108,12 @@ def run(
             all_records.extend(records)
 
         # --- save aggregate report ---
-        out = REPORTS_DIR / f"{repo}.json"
+        out = reports_dir / f"{repo}.json"
         out.write_text(json.dumps(report, indent=2))
         print(f"\n  Report saved → {out}")
 
         # --- save full per-question report ---
-        FULL_REPORTS_DIR.mkdir(exist_ok=True)
-        full_out = FULL_REPORTS_DIR / f"{repo}.json"
+        full_out = full_reports_dir / f"{repo}.json"
         full_report = {
             "repo": repo,
             "n_snippets": len(index.snippets),
@@ -121,7 +122,7 @@ def run(
             "records": all_records,
         }
         full_out.write_text(json.dumps(full_report, indent=2))
-        print(f"  Full report saved → {full_out}")
+        print(f"  Full report saved  → {full_out}")
 
 
 def main() -> None:
@@ -138,6 +139,11 @@ def main() -> None:
     parser.add_argument("--cross-model",
                         default="cross-encoder/ms-marco-MiniLM-L-6-v2")
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "--output-dir", default="reports",
+        help="Directory to save reports (default: reports). "
+             "Use different dirs for ablation runs to avoid overwriting.",
+    )
     args = parser.parse_args()
 
     repos = args.repos or repos_with_questions()
@@ -155,7 +161,8 @@ def main() -> None:
         top_k=args.top_k,
     )
 
-    run(repos, cfg, skip_parse=args.skip_parse, verbose=args.verbose)
+    run(repos, cfg, skip_parse=args.skip_parse, verbose=args.verbose,
+        output_dir=Path(args.output_dir))
     print("\nAll done.")
 
 
