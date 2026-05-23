@@ -44,10 +44,13 @@ def run(
     cfg: PipelineConfig,
     skip_parse: bool,
     verbose: bool,
-    output_dir: Path = Path("reports"),
+    output_dir: Path = Path(""),
 ) -> None:
-    reports_dir      = output_dir
-    full_reports_dir = output_dir / "full"
+    # output_dir="" → default layout: reports/ and full_reports/
+    # output_dir="ablation_hop2" → ablation_hop2_reports/ and ablation_hop2_full_reports/
+    prefix = f"{output_dir}_" if output_dir != Path("") else ""
+    reports_dir      = Path(f"{prefix}reports")
+    full_reports_dir = Path(f"{prefix}full_reports")
     reports_dir.mkdir(parents=True, exist_ok=True)
     full_reports_dir.mkdir(parents=True, exist_ok=True)
     device = cfg.resolved_device()
@@ -71,7 +74,8 @@ def run(
         index = SnippetIndex(AST_CACHE_DIR)
         index.load([repo])
 
-        dual_encoder = DualEncoder(cfg.dual_encoder_model, device, cfg.batch_size)
+        dual_encoder = DualEncoder(cfg.dual_encoder_model, device, cfg.batch_size,
+                                   query_prefix=cfg.query_prefix)
         dual_encoder.index(index.snippets)
 
         expander = ASTNeighborExpander(index, cfg.hop_depth)
@@ -80,6 +84,7 @@ def run(
         run_config = {
             "dual_encoder_model": cfg.dual_encoder_model,
             "cross_encoder_model": cfg.cross_encoder_model,
+            "query_prefix": cfg.query_prefix,
             "top_n": cfg.top_n,
             "hop_depth": cfg.hop_depth,
             "top_k": cfg.top_k,
@@ -138,11 +143,16 @@ def main() -> None:
                         default="sentence-transformers/all-MiniLM-L6-v2")
     parser.add_argument("--cross-model",
                         default="cross-encoder/ms-marco-MiniLM-L-6-v2")
+    parser.add_argument(
+        "--query-prefix", default="",
+        help='Prefix prepended to every query before encoding. '
+             'Use "query: " for BAAI/bge-m3.',
+    )
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument(
-        "--output-dir", default="reports",
-        help="Directory to save reports (default: reports). "
-             "Use different dirs for ablation runs to avoid overwriting.",
+        "--output-dir", default="",
+        help='Tag for output directories. Default (empty) → reports/ and full_reports/. '
+             '"ablation_hop2" → ablation_hop2_reports/ and ablation_hop2_full_reports/.',
     )
     args = parser.parse_args()
 
@@ -159,6 +169,7 @@ def main() -> None:
         top_n=args.top_n,
         hop_depth=args.hop_depth,
         top_k=args.top_k,
+        query_prefix=args.query_prefix,
     )
 
     run(repos, cfg, skip_parse=args.skip_parse, verbose=args.verbose,

@@ -10,12 +10,27 @@ class DualEncoder:
     """
     Encodes a snippet corpus with a bi-encoder and retrieves the top-n most
     similar snippets for a query via cosine similarity (L2-normalised dot product).
+
+    query_prefix is prepended to every query string before encoding.
+    Corpus documents are never prefixed (asymmetric encoding).
+    - MiniLM-style models : query_prefix=""  (default)
+    - BAAI/bge-m3         : query_prefix="query: "
+    - bge-large-en-v1.5   : query_prefix="Represent this sentence for searching relevant passages: "
     """
 
-    def __init__(self, model_name: str, device: str, batch_size: int) -> None:
+    def __init__(
+        self,
+        model_name: str,
+        device: str,
+        batch_size: int,
+        query_prefix: str = "",
+    ) -> None:
         print(f"[DualEncoder] loading '{model_name}' on {device}")
+        if query_prefix:
+            print(f"[DualEncoder] query_prefix='{query_prefix}'")
         self._model = SentenceTransformer(model_name, device=device)
         self._batch_size = batch_size
+        self._query_prefix = query_prefix
         self._embeddings: Optional[np.ndarray] = None  # (N, D)
         self._snippets: list[dict] = []
 
@@ -43,7 +58,7 @@ class DualEncoder:
             raise RuntimeError("Call index() before search().")
 
         q_emb = self._model.encode(
-            [query],
+            [self._query_prefix + query],
             convert_to_numpy=True,
             normalize_embeddings=True,
         )[0]
