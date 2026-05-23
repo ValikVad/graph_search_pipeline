@@ -1,0 +1,10 @@
+# GraphSearch MCP Server — additional dependencies
+# Install on top of the existing requirements.txt:
+#   pip install -r requirements.txt -r requirements_mcp.txt
+
+mcp>=1.0.0                  # Anthropic MCP SDK (FastMCP)
+sentence-transformers>=2.6  # bi-encoder + cross-encoder
+torch>=2.0                  # inference backend
+networkx>=3.0               # call graph
+rank-bm25>=0.2.2            # BM25 baseline
+anthropic>=0.40.0           # LLM eval experiment

@@ -1,0 +1,18 @@
+{
+  "_comment": "Add the 'mcpServers' block to your Claude Desktop config:",
+  "_macos":   "~/Library/Application Support/Claude/claude_desktop_config.json",
+  "_windows": "%APPDATA%\\Claude\\claude_desktop_config.json",
+
+  "mcpServers": {
+    "graphsearch": {
+      "command": "python",
+      "args": [
+        "/Users/vadik/obsidian/obsidian/graph_search_pipeline/mcp_server.py",
+        "--ast-cache", "/Users/vadik/obsidian/obsidian/graph_search_pipeline/ast_cache",
+        "--top-n",     "20",
+        "--hop-depth", "1",
+        "--top-k",     "5"
+      ]
+    }
+  }
+}
